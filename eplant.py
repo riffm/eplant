@@ -47,7 +47,6 @@ def _unpack(struct):
     assert isinstance(struct, (tuple, list)), struct
     assert len(struct) >= 1, struct
     assert isinstance(struct[0], basestring), struct[0]
-    length = len(struct)
     name, attrs, children = struct[0], {}, ()
     if len(struct) > 1:
         if isinstance(struct[1], dict):
