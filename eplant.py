@@ -3,30 +3,6 @@
 '''
 eplant - easy etree planting.
 
-Example:
-
-    >>> from eplant import to_etree
-    >>> from xml.etree.ElementTree import tostring
-    >>> plant = ('SomeRootTag',
-    ...             ('FirstChild', 'text'),
-    ...             ('SecondChild', {'attr': 'value'}, 'text'))
-    >>> tree = to_etree(plant)
-    >>> tostring(tree)
-    '<SomeRootTag><FirstChild>text</FirstChild><SecondChild attr="value">text</SecondChild></SomeRootTag>'
-
-Useful decorator factory example:
-
-    >>> from eplant import as_etree
-    >>> from xml.etree.ElementTree import tostring
-    >>> @as_etree()
-    ... def SomeRootTag():
-    ...     return \
-    ...     ('SomeRootTag',
-    ...        ('FirstChild', 'text'),
-    ...        ('SecondChild', {'attr': 'value'}, 'text'))
-    >>> tostring(SomeRootTag())
-    '<SomeRootTag><FirstChild>text</FirstChild><SecondChild attr="value">text</SecondChild></SomeRootTag>'
-
 '''
 
 import types
