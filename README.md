@@ -49,3 +49,6 @@ Real world example::
 
     $ python example.py
     <ns0:Envelope xmlns:ns0="http://schemas.xmlsoap.org/soap/envelope/"xmlns:ns1="http://my.header.ext/"><ns0:Header><ns1:From ns0:mustUnderstand="true">me</ns1:From></ns0:Header><ns0:Body>hello</ns0:Body></ns0:Envelope>
+
+`qname` objects can be used as tag content or attribute value, it's namespace
+would be considered (by etree implementation).
