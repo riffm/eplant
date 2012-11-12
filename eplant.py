@@ -113,8 +113,6 @@ def to_etree(struct, impl=ElementTree, converters=None, _level=0):
         if isinstance(k, qname):
             attrs.pop(k)
             k = k.to_etree()
-        if isinstance(v, qname):
-            v = impl.QName(v.to_etree())
         for t in type(v).__mro__:
             if t in converters:
                 v = converters[t](impl, v)
