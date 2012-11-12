@@ -35,11 +35,17 @@ Real world example::
     se = namespace('http://schemas.xmlsoap.org/soap/envelope/', 'se')
     mhe = namespace('http://my.header.ext/', 'mhe')
 
-    def Envelope(body):
+    def Envelope(who, body):
         return to_etree(
             (se.Envelope,
                 (se.Header,
-                    (mhe.From, {se.mustUnderstand: True}, 'me')),
+                    (mhe.From, {se.mustUnderstand: True}, who)),
                 (se.Body, body))
         )
 
+    from xml.etree.ElementTree import tostring
+    print tostring(Envelope('me', 'hello'))
+
+
+    $ python example.py
+    <ns0:Envelope xmlns:ns0="http://schemas.xmlsoap.org/soap/envelope/"xmlns:ns1="http://my.header.ext/"><ns0:Header><ns1:From ns0:mustUnderstand="true">me</ns1:From></ns0:Header><ns0:Body>hello</ns0:Body></ns0:Envelope>
