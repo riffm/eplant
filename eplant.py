@@ -3,26 +3,80 @@
 '''
 eplant - easy etree planting.
 
+Example:
+
+    >>> from eplant import to_etree
+    >>> from xml.etree.ElementTree import tostring
+    >>> plant = ('SomeRootTag',
+    ...             ('FirstChild', 'text'),
+    ...             ('SecondChild', {'attr': 'value'}, 'text'))
+    >>> tree = to_etree(plant)
+    >>> tostring(tree)
+    '<SomeRootTag><FirstChild>text</FirstChild><SecondChild attr="value">text</SecondChild></SomeRootTag>'
+    >>> from xml.etree.ElementTree import tostring
+    >>> def SomeRootTag():
+    ...     return \
+    ...     ('SomeRootTag',
+    ...        ('FirstChild', 'text'),
+    ...        ('SecondChild', {'attr': 'value'}, 'text'))
+    >>> tostring(to_etree(SomeRootTag()))
+    '<SomeRootTag><FirstChild>text</FirstChild><SecondChild attr="value">text</SecondChild></SomeRootTag>'
 '''
 
 import types
 import functools
-from xml.etree import ElementTree
+try:
+    from xml.etree import cElementTree as ElementTree
+except ImportError:
+    from xml.etree import ElementTree
 from xml.sax.saxutils import escape, quoteattr
 
 
-def to_etree(struct, builder=None, **kw):
-    '''Transforms to etree representation. Optionaly you can provide a custom
-    builder object, for example `lxml.etree.TreeBuilder`'''
-    builder = builder or ElementTree.TreeBuilder(**kw)
-    _build_etree(struct, builder)
-    return builder.close()
+def is_eplant_node(obj):
+    return isinstance(obj, (tuple, list)) and \
+           len(obj) >= 1 and \
+           isinstance(obj[0], basestring)
+
+
+class namespace(object):
+
+    def __init__(self, uri, prefix):
+        self.uri = uri
+        self.prefix = prefix
+
+    def __call__(self, name, force=False):
+        if isinstance(name, qname):
+            if not force:
+                return name
+            name = name.name
+        return qname(name, self.uri, self.prefix)
+
+    def __div__(self, name):
+        return self(name)
+
+    __getattr__ = __div__
+
+
+class qname(unicode):
+
+    def __new__(cls, name, uri='', prefix=None, **kwargs):
+        self = unicode.__new__(cls,
+                               u'%s:%s' % (prefix, name) if uri else name,
+                               **kwargs)
+        self.name = name
+        self.uri = uri
+        self.prefix = prefix
+        return self
+
+    def __repr__(self):
+        return '<qname %s uri=%r>' % (unicode.__repr__(self), self.uri)
+
+    def to_etree(self):
+        return '{%s}%s' % (self.uri, self.name)
 
 
 def _unpack(struct):
-    assert isinstance(struct, (tuple, list)), struct
-    assert len(struct) >= 1, struct
-    assert isinstance(struct[0], basestring), struct[0]
+    length = len(struct)
     name, attrs, children = struct[0], {}, ()
     if len(struct) > 1:
         if isinstance(struct[1], dict):
@@ -32,66 +86,69 @@ def _unpack(struct):
     return name, dict(attrs), children
 
 
-def _build_etree(struct, builder):
+identity = lambda i,v: v
+_type_converters = {
+    type(None): lambda i,v: u'',
+    str: lambda i,v: v.decode('utf-8'),
+    unicode: identity,
+    int: lambda i,v: unicode(v),
+    float: lambda i,v: unicode(v),
+    bool: lambda i,v: unicode(v).lower(),
+    qname: lambda i,v: i.QName(v.to_etree()),
+}
+
+
+def to_etree(struct, impl=ElementTree, converters=None, _level=0):
+    '''Transforms to etree representation. Optionaly you can provide a custom
+    `ElementTree` implementation module, for example `lxml.etree`
+    converters - `dict[type:callable(impl, value)->unicode]`'''
+    if not _level:
+        converters = dict(_type_converters, **(converters or {}))
+    if not is_eplant_node(struct):
+        raise ValueError('Not an eplant structure')
     name, attrs, children = _unpack(struct)
     if isinstance(name, qname):
-        name = name.to_etree()
+        name = impl.QName(name.to_etree())
     for k,v in attrs.items():
         if isinstance(k, qname):
             attrs.pop(k)
             k = k.to_etree()
+        if isinstance(v, qname):
+            v = impl.QName(v.to_etree())
         attrs[k] = v
-    builder.start(name, attrs)
-    if children:
-        for child in children:
-            if isinstance(child, basestring):
-                builder.data(child)
-            else:
-                _build_etree(child, builder)
-    builder.end(name)
-
-
-def as_etree(**kw):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return to_etree(func(*args, **kwargs), **kw)
-        return wrapper
-    return decorator
-
-
-class namespace(object):
-
-    def __init__(self, uri, shortcut):
-        self.uri = uri
-        self.shortcut = shortcut
-
-    def __call__(self, name, force=False):
-        if isinstance(name, qname):
-            if not force:
-                return name
-            name = name.name
-        return qname(name, self.uri, self.shortcut)
-
-    def __div__(self, name):
-        return self(name)
-
-
-class qname(unicode):
-
-    def __new__(cls, name, uri=None, shortcut=None, **kwargs):
-        assert uri and shortcut
-        self = unicode.__new__(cls, u'%s:%s' % (shortcut, name), **kwargs)
-        self.name = name
-        self.uri = uri
-        self.shortcut = shortcut
-        return self
-
-    def __repr__(self):
-        return '<qname %s uri=%r>' % (unicode.__repr__(self), self.uri)
-
-    def to_etree(self):
-        return '{%s}%s' % (self.uri, self.name)
+    node = impl.Element(name, attrs)
+    content = None
+    last_child = None
+    for child in children:
+        if is_eplant_node(child):
+            if content:
+                if last_child is not None:
+                    last_child.tail = content
+                else:
+                    node.text = content
+                content = None
+            last_child = to_etree(child, impl, converters, _level+1)
+            node.append(last_child)
+            continue
+        match = False
+        for t in type(child).__mro__:
+            #Note: this special hack is `xml.etree.ElementTree` related
+            if t is qname and impl is ElementTree:
+                raise ValueError('xml.etree.ElementTree does not support '
+                                 '`Qname` as tag content: %r' % node)
+            if t in converters:
+                value = converters[t](impl, child)
+                content = value if content is None else content + value
+                match = True
+                break
+        if not match:
+            raise ValueError('Unknown type %r' % child)
+    if content is not None:
+        if last_child is not None:
+            last_child.tail = content
+        else:
+            node.text = content
+    return node
 
 
 class _sample_property(object):
@@ -240,19 +297,19 @@ class NamespaceCollector(Visitor):
     def __init__(self):
         self.namespaces = {}
 
-    def update_namespace(self, uri, shortcut):
-        if shortcut in self.namespaces and uri != self.namespaces[shortcut]:
-            raise ValueError('Namespace shortcut %r represents '
+    def update_namespace(self, uri, prefix):
+        if prefix in self.namespaces and uri != self.namespaces[prefix]:
+            raise ValueError('Namespace prefix %r represents '
                              'different namespaces: %r, %r' % (
-                             shortcut,
-                             self.namespaces[shortcut],
+                             prefix,
+                             self.namespaces[prefix],
                              uri))
-        self.namespaces[shortcut] = uri
+        self.namespaces[prefix] = uri
 
     def visit_tag(self, name, attrs):
         for n in [name]+attrs.keys():
             if isinstance(n, qname):
-                self.update_namespace(n.uri, 'xmlns:'+n.shortcut)
+                self.update_namespace(n.uri, 'xmlns:'+n.prefix)
 
 
 def update_tag(tag, name=None, attrs=None, children=()):
@@ -293,6 +350,9 @@ class EtreeModifier(object):
 
     def get_attr(self, path, name, namespaces=None):
         return self.find_or_fail(path, namespaces).get(name)
+
+    def __getattr__(self, name):
+        return getattr(self.tree, name)
 
 
 # vim: set sts=4 sw=4 et ai:

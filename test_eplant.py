@@ -8,6 +8,17 @@ from eplant import (
         NamespaceCollector, EtreeModifier, encode)
 
 
+has_lxml = False
+try:
+    from lxml import etree
+except ImportError:
+    pass
+else:
+    has_lxml = True
+
+
+
+
 class Tests(unittest.TestCase):
 
     def test_sample_attr_access(self):
@@ -98,9 +109,9 @@ class Tests(unittest.TestCase):
         self.assertTrue(isinstance(xsd('element'), qname))
         self.assertTrue(isinstance(xsd('element'), unicode))
         self.assertEqual(xsd('element'), u'xsd:element')
-        self.assertEqual(xsd/'element', u'xsd:element')
+        self.assertEqual(xsd.element, u'xsd:element')
         self.assertEqual(xsd('element').uri, 'http://www.w3.org/2001/XMLSchema')
-        self.assertEqual(xsd('element').shortcut, 'xsd')
+        self.assertEqual(xsd('element').prefix, 'xsd')
         self.assertEqual(xsd(u'имя-тега'), u'xsd:имя-тега')
         self.assertEqual(repr(xsd('element')),
                          "<qname u'xsd:element' "
@@ -109,8 +120,8 @@ class Tests(unittest.TestCase):
     def test_namespace_collector_with_tags(self):
         ns = namespace('ns', 'ns')
         ns1 = namespace('ns1', 'ns1')
-        tag = (ns/'tag', ('tag1',),
-                         (ns1/'tag2', (ns/'tag3',)))
+        tag = (ns.tag, ('tag1',),
+                         (ns1.tag2, (ns.tag3,)))
         self.assertEqual(NamespaceCollector().visit(tag).namespaces,
                 {'xmlns:ns':'ns', 'xmlns:ns1':'ns1'})
 
@@ -118,11 +129,11 @@ class Tests(unittest.TestCase):
         ns = namespace('ns', 'ns')
         ns1 = namespace('ns1', 'ns1')
         ns3 = namespace('ns3', 'ns3')
-        tag = (ns/'tag',
+        tag = (ns.tag,
                 ('tag1',),
                 'text',
-                (ns1/'tag2', {ns3/'attr': 'value'},
-                    (ns/'tag3',)))
+                (ns1.tag2, {ns3.attr: 'value'},
+                    (ns.tag3,)))
         self.assertEqual(NamespaceCollector().visit(tag).namespaces,
                          {'xmlns:ns':'ns',
                           'xmlns:ns1':'ns1',
@@ -131,8 +142,8 @@ class Tests(unittest.TestCase):
     def test_namespace_collector_with_overlaping_shortcuts(self):
         ns = namespace('ns', 'ns')
         ns1 = namespace('ns1', 'ns')
-        tag = (ns/'tag', ('tag1',),
-                         (ns1/'tag2', (ns/'tag3',)))
+        tag = (ns.tag, ('tag1',),
+                         (ns1.tag2, (ns.tag3,)))
         with self.assertRaises(ValueError) as err:
             NamespaceCollector().visit(tag).namespaces
 
@@ -140,11 +151,11 @@ class Tests(unittest.TestCase):
         ns = namespace('ns', 'ns')
         ns1 = namespace('ns1', 'ns1')
         ns3 = namespace('ns3', 'ns3')
-        tag = (ns/'tag',
+        tag = (ns.tag,
                 ('tag1',),
                 'text',
-                (ns1/'tag2', {ns3/'attr': 'value'},
-                    (ns/'tag3',)))
+                (ns1.tag2, {ns3.attr: 'value'},
+                    (ns.tag3,)))
         self.assertEqual(encode(tag, indent=2),
                          '<?xml version="1.0"?>\n'
                          '<ns:tag xmlns:ns="ns" xmlns:ns1="ns1" xmlns:ns3="ns3">\n'
@@ -191,13 +202,13 @@ class Tests(unittest.TestCase):
 
     def test_to_etree_tag_with_ns(self):
         ns = namespace('ns', 'ns')
-        self.assertEqualEtree(to_etree((ns/'a',)),
+        self.assertEqualEtree(to_etree((ns.a,)),
                               ElementTree.fromstring('<ns:a xmlns:ns="ns"/>'))
 
-    def test_custom_builder_object(self):
-        self.assertEqualEtree(to_etree(('a',),
-                                       builder=ElementTree.TreeBuilder()),
-                              ElementTree.fromstring('<a/>'))
+    def test_custom_impl_object(self):
+        from xml.etree import cElementTree
+        self.assertEqualEtree(to_etree(('a',), impl=cElementTree),
+                              cElementTree.fromstring('<a/>'))
 
     def test_timestamp_from_datetime(self):
         self.assertEqual(timestamp(datetime.datetime(2000, 1, 1)),
@@ -212,43 +223,46 @@ class Tests(unittest.TestCase):
                                                      tzinfo=tzutc())),
                          '2000-01-01T00:00:00+00:00')
 
-    def test_etree_modifier_set_text(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        tree.set_text('b', 'text')
-        self.assertEqual(tree.tree.find('b').text, 'text')
 
-    def test_etree_modifier_set_text_with_invalid_path(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        with self.assertRaises(ValueError):
-            tree.set_text('bb', 'text')
+class TypeConversionTests(unittest.TestCase):
 
-    def test_etree_modifier_get_text(self):
-        tree = EtreeModifier(to_etree(('a', ('b', 'text'))))
-        self.assertEqual(tree.get_text('b'), 'text')
+    def assertEtreeStrEquals(self, struct, value):
+        self.assertEqual(ElementTree.tostring(to_etree(struct)), value)
 
-    def test_etree_modifier_get_text_with_invalid_path(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        with self.assertRaises(ValueError):
-            tree.get_text('bb')
+    def test_None(self):
+        self.assertEtreeStrEquals(('a', None), '<a />')
 
-    def test_etree_modifier_set_attr(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        tree.set_attr('b', 'id', 'value')
-        self.assertEqual(tree.tree.find('b').attrib, {'id': 'value'})
+    def test_str(self):
+        self.assertEtreeStrEquals(('a', 'text'), '<a>text</a>')
 
-    def test_etree_modifier_set_attr_with_invalid_path(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        with self.assertRaises(ValueError):
-            tree.set_attr('bb', 'id', 'value')
+    def test_unicode(self):
+        self.assertEtreeStrEquals(('a', u'text'), '<a>text</a>')
 
-    def test_etree_modifier_get_attr(self):
-        tree = EtreeModifier(to_etree(('a', ('b', {'id': 'value'}))))
-        self.assertEqual(tree.get_attr('b', 'id'), 'value')
+    def test_int(self):
+        self.assertEtreeStrEquals(('a', 1), '<a>1</a>')
 
-    def test_etree_modifier_get_attr_with_invalid_path(self):
-        tree = EtreeModifier(to_etree(('a', ('b',))))
-        with self.assertRaises(ValueError):
-            tree.get_attr('bb', 'id')
+    def test_float(self):
+        self.assertEtreeStrEquals(('a', 1.0), '<a>1.0</a>')
+
+    def test_bool(self):
+        self.assertEtreeStrEquals(('a', True), '<a>true</a>')
+
+    def test_basestring_child_class(self):
+        class MyStr(str):
+            pass
+        self.assertIsInstance(MyStr(), basestring)
+        self.assertEtreeStrEquals(('a', MyStr('a')), '<a>a</a>')
+
+    def test_qname_using_ElementTree(self):
+        ns = namespace('urn:n', 'ns0')
+        with self.assertRaisesRegexp(ValueError, 'does not support'):
+                ElementTree.tostring(to_etree(('a', ns.tag)))
+
+    @unittest.skipIf(not has_lxml, 'need lxml')
+    def test_qname_using_lxml(self):
+        ns = namespace('urn:n', 'ns0')
+        self.assertEqual(etree.tostring(to_etree(('a', ns.tag), impl=etree)),
+                                        '<a xmlns:ns0="urn:n">ns0:tag</a>')
 
 
 if __name__=='__main__':
